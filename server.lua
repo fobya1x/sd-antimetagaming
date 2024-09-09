@@ -4,60 +4,67 @@ Config = {
     RequiredVoiceChannelID = "" -- The ID of the voice channel the player must be in
 }
 
--- Function to get the player's Discord ID
+
 function GetPlayerDiscordId(PlayerSource)
-    local identifiers = GetPlayerIdentifiers(PlayerSource)
-    for _, identifier in ipairs(identifiers) do
+    for _, identifier in ipairs(GetPlayerIdentifiers(PlayerSource)) do
         if string.find(identifier, "discord:") then
-            return string.sub(identifier, 9) 
+            return string.sub(identifier, 9)
         end
     end
-    return nil 
+    return nil
 end
 
 function IsPlayerInDiscordVoiceChannel(PlayerSource, callback)
     local discordId = GetPlayerDiscordId(PlayerSource)
+    if not discordId then return callback(false) end
 
-    if discordId then
-        local endpoint = string.format("https://discord.com/api/v9/guilds/%s/members/%s", Config.GuildID, discordId)
-        
-        local headers = {
-            ["Authorization"] = "Bot " .. Config.DiscordBotToken,
-            ["Content-Type"] = "application/json"
-        }
+    local endpoint = string.format("https://discord.com/api/v9/guilds/%s/voice-states/%s", Config.GuildID, discordId)
+    local headers = {
+        ["Authorization"] = "Bot " .. Config.DiscordBotToken,
+        ["Content-Type"] = "application/json"
+    }
 
-        PerformHttpRequest(endpoint, function(statusCode, response, headers)
-            if statusCode == 200 and response then
-                local data = json.decode(response)
-                
-				print(data.channel_id)
-                if data and data.voice_state and data.voice_state.channel_id == Config.RequiredVoiceChannelID then
-                    print("Player is in the required voice channel.")
-                    callback(true)
-                else
-                    print("Player is not in the required voice channel.")
-                    callback(false)
-                end
-            else
-                print("Failed to retrieve player information from Discord.")
-                callback(false)
-            end
-        end, 'GET', "", headers)
-    else
-        print("Player does not have a linked Discord account.")
-        callback(false) 
-    end
+    PerformHttpRequest(endpoint, function(statusCode, response)
+        if statusCode == 200 and response then
+            local data = json.decode(response)
+            callback(data.channel_id and data.channel_id == Config.RequiredVoiceChannelID)
+        else
+            callback(false)
+        end
+    end, 'GET', "", headers)
 end
 
 AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
     local src = source
     deferrals.defer()
+    Wait(1)
+    deferrals.update('Checking If The Player In Voice Channel ...')
 
     IsPlayerInDiscordVoiceChannel(src, function(isInVoiceChannel)
         if isInVoiceChannel then
-            deferrals.done()
+            deferrals.done() 
         else
-            deferrals.done("You must be in the required Discord voice channel to join!") -- Deny access
+            deferrals.done('Join The Voice Channel') 
         end
     end)
+end)
+
+
+Citizen.CreateThread(function()
+    while true do
+        Citizen.Wait(3 * 60000) 
+
+
+        for _, playerId in ipairs(GetPlayers()) do
+            local discordId = GetPlayerDiscordId(playerId)
+            if discordId then
+                IsPlayerInDiscordVoiceChannel(playerId, function(isInVoiceChannel)
+                    if not isInVoiceChannel then
+                        DropPlayer(playerId, 'Join The Voice Channel')
+                    end
+                end)
+            end
+        end
+
+    end
 end)
